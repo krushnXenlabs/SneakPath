@@ -1,0 +1,7 @@
+# Copy to db.conf (it is gitignored) and fill in the password.
+# Environment variables ESCAPE_DB_HOST / PORT / USER / PASSWORD / NAME win over this file.
+host=127.0.0.1
+port=3306
+user=escape_game
+password=CHANGE_ME
+database=escape_professor

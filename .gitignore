@@ -1,0 +1,11 @@
+build/
+sneakpath
+highscores.txt
+player.txt
+db.conf
+*.bmp
+.DS_Store
+.venv/
+__pycache__/
+# local report drafts
+*.docx

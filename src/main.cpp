@@ -1,10 +1,15 @@
 #include <SDL.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "db.hpp"
 #include "draw.hpp"
 #include "game.hpp"
 
@@ -14,13 +19,110 @@ State state = State::Menu;
 int fade_alpha = 0;  // > 0 while a screen transition (fade-in) is running
 bool running = true;
 
-void change_state(Game&, State new_state) {
+// --------------------------------
+// Leaderboard state (the DB work itself happens on a worker thread)
+// --------------------------------
+
+std::unique_ptr<Leaderboard> board;
+std::string player_file;       // remembered player name
+std::string player_name;       // "" until the player has entered one
+std::string name_input;        // what is being typed on the name screen
+std::string submit_status;     // shown on the win screen: Submitting / Rank / offline
+Difficulty board_tab = DEFAULT_DIFFICULTY;
+std::vector<LeaderboardRow> board_rows;
+std::string board_status;
+State board_return = State::Menu;  // where BACK leads from the leaderboard
+draw::Highlight highlight;
+
+std::string short_error(const std::string& error) {
+    return error.size() > 70 ? error.substr(0, 67) + "..." : error;
+}
+
+void load_player_name() {
+    std::ifstream in(player_file);
+    std::string line;
+    if (std::getline(in, line)) player_name = sanitize_name(line);
+}
+
+void save_player_name() {
+    std::ofstream out(player_file);  // the game works fine if this fails
+    out << player_name << '\n';
+}
+
+void change_state(State new_state) {
     // Pausing/resuming should not flash, every other change fades in
     bool pause_toggle = (state == State::Playing && new_state == State::Paused) ||
                         (state == State::Paused && new_state == State::Playing);
     if (!pause_toggle) fade_alpha = 255;
 
+    if (new_state == State::NameEntry && state != State::NameEntry) SDL_StartTextInput();
+    if (state == State::NameEntry && new_state != State::NameEntry) SDL_StopTextInput();
+
     state = new_state;
+}
+
+void submit_run(const Game& game) {
+    RunRecord run;
+    run.name = player_name;
+    run.difficulty = game.difficulty;
+    run.score = game.final_score;
+    run.time_ms = game.elapsed_ms;
+    run.steps = std::min(game.steps, 65535);
+    run.pickups = 3 - static_cast<int>(game.pickups.size());
+
+    highlight = {run.name, run.score, run.time_ms};
+    submit_status = "Submitting score...";
+    board->submit(run);
+}
+
+void on_win(const Game& game) {
+    if (player_name.empty()) {
+        name_input.clear();
+        change_state(State::NameEntry);
+    } else {
+        submit_run(game);
+        change_state(State::Win);
+    }
+}
+
+void request_board() {
+    board_rows.clear();
+    board_status = "Loading...";
+    board->fetch(board_tab, 10);
+}
+
+void open_leaderboard(const Game& game, State from) {
+    board_return = from;
+    board_tab = game.difficulty;
+    request_board();
+    change_state(State::Leaderboard);
+}
+
+void set_tab(int index) {
+    board_tab = static_cast<Difficulty>(((index % DIFFICULTY_COUNT) + DIFFICULTY_COUNT) % DIFFICULTY_COUNT);
+    request_board();
+}
+
+// Applies finished background jobs; called every frame
+void poll_board() {
+    LeaderboardResult r;
+    while (board->poll(r)) {
+        if (r.kind == LeaderboardResult::Kind::Submit) {
+            if (r.ok)
+                submit_status = "Rank #" + std::to_string(r.rank) + " of " + std::to_string(r.total) + " on " +
+                                name_of(r.difficulty);
+            else
+                submit_status = "Leaderboard offline: " + short_error(r.error);
+        } else if (r.difficulty == board_tab) {  // ignore answers for a tab we already left
+            if (r.ok) {
+                board_rows = r.rows;
+                board_status = board_rows.empty() ? "No scores yet. Be the first!" : "";
+            } else {
+                board_rows.clear();
+                board_status = "Leaderboard offline: " + short_error(r.error);
+            }
+        }
+    }
 }
 
 // --------------------------------
@@ -46,12 +148,20 @@ std::vector<Button> get_buttons(const Game& game) {
     switch (state) {
         case State::Menu:
             return make_buttons({"START GAME", std::string("DIFFICULTY: ") + name_of(game.difficulty),
-                                 "INSTRUCTIONS", "QUIT"},
+                                 "INSTRUCTIONS", "LEADERBOARD", "QUIT"},
                                 265);
         case State::Instructions: return make_buttons({"BACK"}, SCREEN_HEIGHT - 80);
         case State::Paused: return make_buttons({"RESUME", "RESTART", "MAIN MENU"}, 265);
-        case State::GameOver: return make_buttons({"RESTART", "MAIN MENU", "QUIT"}, 265);
-        case State::Win: return make_buttons({"PLAY AGAIN", "MAIN MENU", "QUIT"}, 330);  // room for the score lines
+        case State::GameOver: return make_buttons({"RESTART", "LEADERBOARD", "MAIN MENU", "QUIT"}, 265);
+        case State::Win: return make_buttons({"PLAY AGAIN", "LEADERBOARD", "MAIN MENU", "QUIT"}, 335);  // room for the score lines
+        case State::Leaderboard: {
+            std::vector<Button> buttons;
+            for (int i = 0; i < DIFFICULTY_COUNT; i++)
+                buttons.push_back({name_of(static_cast<Difficulty>(i)), SDL_Rect{144 + i * 176, 100, 160, 44}});
+            buttons.push_back({"BACK", SDL_Rect{(SCREEN_WIDTH - BUTTON_WIDTH) / 2, SCREEN_HEIGHT - 72, BUTTON_WIDTH,
+                                                BUTTON_HEIGHT}});
+            return buttons;
+        }
         default: return {};
     }
 }
@@ -59,15 +169,22 @@ std::vector<Button> get_buttons(const Game& game) {
 void press_button(Game& game, const std::string& label) {
     if (label == "START GAME" || label == "PLAY AGAIN" || label == "RESTART") {
         game.reset();
-        change_state(game, State::Playing);
+        submit_status.clear();
+        change_state(State::Playing);
     } else if (label.rfind("DIFFICULTY", 0) == 0) {
         game.difficulty = static_cast<Difficulty>((static_cast<int>(game.difficulty) + 1) % DIFFICULTY_COUNT);
     } else if (label == "INSTRUCTIONS") {
-        change_state(game, State::Instructions);
+        change_state(State::Instructions);
+    } else if (label == "LEADERBOARD") {
+        open_leaderboard(game, state);
+    } else if (state == State::Leaderboard && (label == "EASY" || label == "MEDIUM" || label == "HARD")) {
+        set_tab(label == "EASY" ? 0 : label == "MEDIUM" ? 1 : 2);
+    } else if (label == "BACK" && state == State::Leaderboard) {
+        change_state(board_return);
     } else if (label == "BACK" || label == "MAIN MENU") {
-        change_state(game, State::Menu);
+        change_state(State::Menu);
     } else if (label == "RESUME") {
-        change_state(game, State::Playing);
+        change_state(State::Playing);
     } else if (label == "QUIT") {
         running = false;
     }
@@ -88,6 +205,31 @@ Cell get_input_direction() {
     return {0, 0};
 }
 
+void type_text(const char* text) {
+    for (const char* c = text; *c; ++c) {
+        unsigned char ch = static_cast<unsigned char>(*c);
+        bool allowed = std::isalnum(ch) || ch == '_' || ch == '-' || (ch == ' ' && !name_input.empty());
+        if (allowed && name_input.size() < MAX_NAME_LENGTH) name_input += static_cast<char>(ch);
+    }
+}
+
+void handle_name_key(Game& game, SDL_Keycode key) {
+    if (key == SDLK_BACKSPACE) {
+        if (!name_input.empty()) name_input.pop_back();
+    } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+        std::string name = sanitize_name(name_input);
+        if (!name.empty()) {
+            player_name = name;
+            save_player_name();
+            submit_run(game);
+            change_state(State::Win);
+        }
+    } else if (key == SDLK_ESCAPE) {
+        submit_status = "Score not submitted";
+        change_state(State::Win);
+    }
+}
+
 void handle_events(Game& game) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -103,6 +245,12 @@ void handle_events(Game& game) {
                 }
             }
 
+        } else if (event.type == SDL_TEXTINPUT) {
+            if (state == State::NameEntry) type_text(event.text.text);
+
+        } else if (event.type == SDL_KEYDOWN && state == State::NameEntry) {
+            handle_name_key(game, event.key.keysym.sym);  // key repeat is wanted for backspace
+
         } else if (event.type == SDL_KEYDOWN && !event.key.repeat) {
             SDL_Keycode key = event.key.keysym.sym;
             bool enter = key == SDLK_RETURN || key == SDLK_KP_ENTER;
@@ -116,7 +264,7 @@ void handle_events(Game& game) {
                     if (escape || enter) press_button(game, "BACK");
                     break;
                 case State::Playing:
-                    if (escape) change_state(game, State::Paused);
+                    if (escape) change_state(State::Paused);
                     break;
                 case State::Paused:
                     if (escape || enter)
@@ -131,9 +279,35 @@ void handle_events(Game& game) {
                     else if (escape)
                         press_button(game, "MAIN MENU");
                     break;
+                case State::Leaderboard:
+                    if (escape || enter)
+                        press_button(game, "BACK");
+                    else if (key == SDLK_LEFT)
+                        set_tab(static_cast<int>(board_tab) - 1);
+                    else if (key == SDLK_RIGHT)
+                        set_tab(static_cast<int>(board_tab) + 1);
+                    break;
+                case State::NameEntry:
+                    break;
             }
         }
     }
+}
+
+// Fake data so the new screens can be screenshotted without a database
+void fill_demo_leaderboard() {
+    const char* names[] = {"Ava", "Noah", "Mia", "Liam", "Zoe", "Ethan", "Ivy", "Leo"};
+    for (int i = 0; i < 8; i++) {
+        LeaderboardRow row;
+        row.rank = i + 1;
+        row.name = names[i];
+        row.score = 3400 - i * 310;
+        row.time_ms = 21000 + i * 3700;
+        row.steps = 52 + i * 6;
+        row.date = "2026-10-2" + std::to_string(8 - i % 3);
+        board_rows.push_back(row);
+    }
+    highlight = {"Mia", board_rows[2].score, board_rows[2].time_ms};
 }
 
 }  // namespace
@@ -171,10 +345,16 @@ int main(int argc, char** argv) {
     }
 
     Game game;
-    char* base = SDL_GetBasePath();
-    game.score_file = std::string(base ? base : "./") + "highscores.txt";
-    SDL_free(base);
+    char* base_path = SDL_GetBasePath();
+    std::string base = base_path ? base_path : "./";
+    SDL_free(base_path);
+
+    game.score_file = base + "highscores.txt";
     game.load_best_scores();
+
+    player_file = base + "player.txt";
+    load_player_name();
+    board = std::make_unique<Leaderboard>(load_db_config(base + "db.conf"));
 
     Uint32 last_ticks = SDL_GetTicks();
 
@@ -184,7 +364,17 @@ int main(int argc, char** argv) {
         else if (name == "playing") state = State::Playing;
         else if (name == "paused") state = State::Paused;
         else if (name == "gameover") state = State::GameOver;
-        else if (name == "win") state = State::Win;
+        else if (name == "win") {
+            state = State::Win;
+            submit_status = "Rank #4 of 37 on MEDIUM";
+        } else if (name == "nameentry") {
+            state = State::NameEntry;
+            name_input = "Krushn";
+        } else if (name == "leaderboard" || name == "leaderboard-offline") {
+            state = State::Leaderboard;
+            if (name == "leaderboard") fill_demo_leaderboard();
+            else board_status = "Leaderboard offline: Can't connect to MySQL server on '127.0.0.1:3306'";
+        }
         game.elapsed_ms = 23400;
         game.steps = 41;
         game.final_score = 2150;
@@ -200,11 +390,12 @@ int main(int argc, char** argv) {
         if (!shot_screen) SDL_GetMouseState(&mouse.x, &mouse.y);
 
         handle_events(game);
+        poll_board();
 
         if (state == State::Playing && !shot_screen) {
             Outcome outcome = game.update(dt, get_input_direction());
-            if (outcome == Outcome::Caught) change_state(game, State::GameOver);
-            if (outcome == Outcome::Won) change_state(game, State::Win);
+            if (outcome == Outcome::Caught) change_state(State::GameOver);
+            if (outcome == Outcome::Won) on_win(game);
         }
 
         std::vector<Button> buttons = get_buttons(game);
@@ -213,11 +404,17 @@ int main(int argc, char** argv) {
             case State::Menu: draw::menu(buttons, mouse); break;
             case State::Instructions: draw::instructions(buttons, mouse); break;
             case State::Playing: draw::game_scene(game, state); break;
-            case State::Paused: draw::overlay(game, state, "GAME PAUSED", TEXT_COLOR, buttons, mouse); break;
+            case State::Paused: draw::overlay(game, state, "GAME PAUSED", TEXT_COLOR, buttons, mouse, ""); break;
             case State::GameOver:
-                draw::overlay(game, state, "CAUGHT BY THE PROFESSOR!", PROFESSOR_COLOR, buttons, mouse);
+                draw::overlay(game, state, "CAUGHT BY THE PROFESSOR!", PROFESSOR_COLOR, buttons, mouse, "");
                 break;
-            case State::Win: draw::overlay(game, state, "YOU ESCAPED!", EXIT_COLOR, buttons, mouse); break;
+            case State::Win:
+                draw::overlay(game, state, "YOU ESCAPED!", EXIT_COLOR, buttons, mouse, submit_status);
+                break;
+            case State::NameEntry: draw::name_entry(game, name_input, (SDL_GetTicks() / 500) % 2 == 0); break;
+            case State::Leaderboard:
+                draw::leaderboard(buttons, mouse, board_tab, board_rows, board_status, highlight);
+                break;
         }
 
         draw::transition(fade_alpha);
@@ -230,6 +427,7 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(renderer);
     }
 
+    board.reset();  // joins the worker thread
     draw::shutdown();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

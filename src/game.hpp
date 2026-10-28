@@ -11,7 +11,7 @@
 #include "settings.hpp"
 
 // Which screen is shown and handled
-enum class State { Menu, Instructions, Playing, Paused, GameOver, Win };
+enum class State { Menu, Instructions, Playing, Paused, GameOver, Win, NameEntry, Leaderboard };
 
 enum class Kind { Key, Coffee, Book };
 

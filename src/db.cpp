@@ -102,11 +102,9 @@ struct Conn {
             return false;
         }
         unsigned connect_timeout = 2, io_timeout = 3;
-        bool reconnect = false;
         mysql_options(mysql, MYSQL_OPT_CONNECT_TIMEOUT, &connect_timeout);
         mysql_options(mysql, MYSQL_OPT_READ_TIMEOUT, &io_timeout);
         mysql_options(mysql, MYSQL_OPT_WRITE_TIMEOUT, &io_timeout);
-        mysql_options(mysql, MYSQL_OPT_RECONNECT, &reconnect);
         mysql_options(mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
 
         if (!mysql_real_connect(mysql, c.host.c_str(), c.user.c_str(), c.password.c_str(), c.database.c_str(),
@@ -240,11 +238,12 @@ bool submit_score(const DbConfig& config, const RunRecord& run, int& rank, int& 
         return false;
     }
 
-    // Player row: reuse an existing name, otherwise create it
+    // Player row: create the name if it is new, then look its id up. Plain INSERT IGNORE
+    // + SELECT keeps the game account at SELECT and INSERT (no UPDATE privilege needed).
     unsigned long long player_id = 0;
     {
         Stmt s(mysql);
-        if (!s.prepare("INSERT INTO players (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)")) {
+        if (!s.prepare("INSERT IGNORE INTO players (name) VALUES (?)")) {
             error = s.error();
             return false;
         }
@@ -254,7 +253,23 @@ bool submit_score(const DbConfig& config, const RunRecord& run, int& rank, int& 
             mysql_rollback(mysql);
             return false;
         }
-        player_id = s.insert_id();
+    }
+    {
+        Stmt s(mysql);
+        if (!s.prepare("SELECT id FROM players WHERE name = ?")) {
+            error = s.error();
+            mysql_rollback(mysql);
+            return false;
+        }
+        s.param(run.name);
+        bool got = s.execute() && s.each_row(1, [&](const std::vector<std::string>& cols) {
+            player_id = std::strtoull(cols[0].c_str(), nullptr, 10);
+        });
+        if (!got || player_id == 0) {
+            error = got ? "player lookup failed" : s.error();
+            mysql_rollback(mysql);
+            return false;
+        }
     }
 
     {

@@ -370,10 +370,13 @@ void info_bar(const Game& game, State state) {
     text(SMALL, effects, FROZEN_COLOR, SCREEN_WIDTH - 16, 68, TOP_RIGHT);
 }
 
-void buttons_row(const std::vector<Button>& buttons, SDL_Point mouse) {
+// `active_label` marks a selected tab-style button
+void buttons_row(const std::vector<Button>& buttons, SDL_Point mouse, const std::string& active_label = "") {
     for (const Button& b : buttons) {
         bool hovered = SDL_PointInRect(&mouse, &b.rect);
-        rounded_rect(b.rect, 8, 2, BUTTON_BORDER, hovered ? BUTTON_HOVER : BUTTON_COLOR);
+        bool active = b.label == active_label;
+        rounded_rect(b.rect, 8, 2, active ? PATH_COLOR : BUTTON_BORDER,
+                     hovered ? BUTTON_HOVER : active ? Color{74, 76, 100} : BUTTON_COLOR);
         text(TEXT, b.label, TEXT_COLOR, b.rect.x + b.rect.w / 2, b.rect.y + b.rect.h / 2, CENTER);
     }
 }
@@ -533,12 +536,12 @@ void instructions(const std::vector<Button>& buttons, SDL_Point mouse) {
 }
 
 void overlay(const Game& game, State state, const char* title, Color title_color,
-             const std::vector<Button>& buttons, SDL_Point mouse) {
+             const std::vector<Button>& buttons, SDL_Point mouse, const std::string& submit_status) {
     game_scene(game, state);
 
     rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Color{0, 0, 0, 150});
 
-    SDL_Rect panel{0, 0, 560, state == State::Win ? 380 : 310};
+    SDL_Rect panel{0, 0, 560, state == State::Win ? 480 : state == State::GameOver ? 400 : 310};
     panel.x = SCREEN_WIDTH / 2 - panel.w / 2;
     panel.y = SCREEN_HEIGHT / 2 + 20 - panel.h / 2;
     rounded_rect(panel, 12, 2, BAR_BORDER, BAR_BG);
@@ -557,11 +560,79 @@ void overlay(const Game& game, State state, const char* title, Color title_color
         else
             text(SMALL, "Best (" + name + "): " + std::to_string(game.best_for(game.difficulty)), TEXT_DIM,
                  middle, panel.y + 160, CENTER);
+
+        // Leaderboard result: submitting, rank, or offline
+        bool ranked = submit_status.rfind("Rank", 0) == 0;
+        text(SMALL, submit_status, ranked ? EXIT_COLOR : TEXT_DIM, middle, panel.y + 190, CENTER);
     } else if (state == State::GameOver) {
         text(SMALL, fmt("Survived %.1fs", game.elapsed_ms / 1000.0), TEXT_DIM, middle, panel.y + 80, CENTER);
     }
 
     buttons_row(buttons, mouse);
+}
+
+void name_entry(const Game& game, const std::string& input, bool caret_on) {
+    game_scene(game, State::Win);
+    rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Color{0, 0, 0, 150});
+
+    SDL_Rect panel{SCREEN_WIDTH / 2 - 280, SCREEN_HEIGHT / 2 - 130, 560, 260};
+    rounded_rect(panel, 12, 2, BAR_BORDER, BAR_BG);
+
+    int middle = SCREEN_WIDTH / 2;
+    text(HEADING, "YOU ESCAPED!", EXIT_COLOR, middle, panel.y + 40, CENTER);
+    text(TEXT, "Score " + std::to_string(game.final_score) + " on " + name_of(game.difficulty), PATH_COLOR, middle,
+         panel.y + 80, CENTER);
+    text(SMALL, "Enter your name for the leaderboard", TEXT_DIM, middle, panel.y + 115, CENTER);
+
+    SDL_Rect box{middle - 180, panel.y + 135, 360, 48};
+    rounded_rect(box, 8, 2, BUTTON_BORDER, Color{14, 14, 20});
+    text(TEXT, input, TEXT_COLOR, box.x + 14, box.y + 12, TOP_LEFT);
+
+    if (caret_on) {
+        int w = 0, h = 0;
+        if (!input.empty()) TTF_SizeUTF8(fonts[TEXT], input.c_str(), &w, &h);
+        rect(box.x + 14 + std::floor(w / scale) + 2, static_cast<float>(box.y + 10), 2, 28, TEXT_COLOR);
+    }
+
+    text(SMALL, "ENTER = submit     ESC = skip", TEXT_DIM, middle, panel.y + 220, CENTER);
+}
+
+void leaderboard(const std::vector<Button>& buttons, SDL_Point mouse, Difficulty tab,
+                 const std::vector<LeaderboardRow>& rows, const std::string& status, const Highlight& highlight) {
+    set_color(BACKGROUND);
+    SDL_RenderClear(renderer);
+
+    text(TITLE, "LEADERBOARD", TEXT_COLOR, SCREEN_WIDTH / 2, 50, CENTER);
+    buttons_row(buttons, mouse, name_of(tab));
+
+    const int X_RANK = 84, X_NAME = 130, X_SCORE = 330, X_TIME = 430, X_STEPS = 530, X_DATE = 615;
+    const int top = 165;
+    text(SMALL, "#", TEXT_DIM, X_RANK, top, TOP_LEFT);
+    text(SMALL, "PLAYER", TEXT_DIM, X_NAME, top, TOP_LEFT);
+    text(SMALL, "SCORE", TEXT_DIM, X_SCORE, top, TOP_LEFT);
+    text(SMALL, "TIME", TEXT_DIM, X_TIME, top, TOP_LEFT);
+    text(SMALL, "STEPS", TEXT_DIM, X_STEPS, top, TOP_LEFT);
+    text(SMALL, "DATE", TEXT_DIM, X_DATE, top, TOP_LEFT);
+    rect(70, static_cast<float>(top + 26), SCREEN_WIDTH - 140, 1, BAR_BORDER);
+
+    for (std::size_t i = 0; i < rows.size(); i++) {
+        const LeaderboardRow& row = rows[i];
+        int y = top + 36 + static_cast<int>(i) * 34;
+
+        bool mine = row.name == highlight.name && row.score == highlight.score && row.time_ms == highlight.time_ms;
+        if (mine) rect(70, static_cast<float>(y - 4), SCREEN_WIDTH - 140, 30, Color{240, 200, 60, 45});
+
+        Color color = row.rank <= 3 ? PATH_COLOR : TEXT_COLOR;
+        text(TEXT, std::to_string(row.rank), color, X_RANK, y, TOP_LEFT);
+        text(TEXT, row.name, color, X_NAME, y, TOP_LEFT);
+        text(TEXT, std::to_string(row.score), color, X_SCORE, y, TOP_LEFT);
+        text(TEXT, fmt("%.1fs", row.time_ms / 1000.0), color, X_TIME, y, TOP_LEFT);
+        text(TEXT, std::to_string(row.steps), color, X_STEPS, y, TOP_LEFT);
+        text(TEXT, row.date, TEXT_DIM, X_DATE, y, TOP_LEFT);
+    }
+
+    bool offline = status.rfind("Leaderboard offline", 0) == 0;
+    text(SMALL, status, offline ? PROFESSOR_COLOR : TEXT_DIM, SCREEN_WIDTH / 2, rows.empty() ? 340 : 556, CENTER);
 }
 
 bool save_screenshot(const char* file) {

@@ -25,7 +25,7 @@ make test       # runs the logic tests (no window needed)
 
 ## How it works
 
-- `src/pathfinding.*`: A* with a 4-way grid, a Manhattan heuristic, a danger penalty near professors and a border penalty, so the "shortest" route is really the safest one. Professors chase with BFS.
+- `src/pathfinding.*`: A* with a 4-way grid, a Manhattan heuristic and a danger penalty near professors, so the hint is the safest route, not just the shortest. Professors chase with BFS.
 - `src/game.*`: all gameplay state and rules, with no SDL dependency, so it runs headless in tests.
 - `src/draw.*`, `src/main.cpp`: SDL rendering, screens, buttons and input.
 - `src/db.*`, `db/`: MySQL leaderboard (prepared statements, worker thread so the game never freezes if the database is slow or down).

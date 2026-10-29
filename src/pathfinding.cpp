@@ -19,15 +19,6 @@ int danger_cost(Cell cell, const std::vector<Cell>& professors) {
     return 0;
 }
 
-int border_cost(Cell cell) {
-    int distance = std::min({cell.x, cell.y, COLS - 1 - cell.x, ROWS - 1 - cell.y});
-
-    if (distance <= 1) return 30;
-    if (distance == 2) return 20;
-    if (distance == 3) return 10;
-    return 0;
-}
-
 std::vector<Cell> get_neighbors(Cell node) {
     const Cell candidates[4] = {
         {node.x + 1, node.y}, {node.x - 1, node.y}, {node.x, node.y + 1}, {node.x, node.y - 1}};
@@ -76,8 +67,7 @@ std::vector<Cell> astar(Cell start, Cell goal, const std::vector<Cell>& professo
         if (current == goal) break;
 
         for (Cell neighbor : get_neighbors(current)) {
-            int new_cost = cost_so_far[current] + 1 + danger_cost(neighbor, professors) +
-                           border_cost(neighbor);
+            int new_cost = cost_so_far[current] + 1 + danger_cost(neighbor, professors);
 
             auto it = cost_so_far.find(neighbor);
             if (it == cost_so_far.end() || new_cost < it->second) {

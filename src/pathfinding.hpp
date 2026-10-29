@@ -9,12 +9,11 @@ struct SearchStats {
 };
 
 int danger_cost(Cell cell, const std::vector<Cell>& professors);
-int border_cost(Cell cell);
 
 // Walkable 4-way neighbours, in the order +x, -x, +y, -y.
 std::vector<Cell> get_neighbors(Cell node);
 
-// A* from start to goal. Each step costs 1 + danger_cost + border_cost, so the
+// A* from start to goal. Each step costs 1 + danger_cost, so the
 // route is the safest one, not the shortest. Returns {} if the goal is unreachable.
 std::vector<Cell> astar(Cell start, Cell goal, const std::vector<Cell>& professors,
                         SearchStats* stats = nullptr);

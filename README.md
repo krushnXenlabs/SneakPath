@@ -48,7 +48,7 @@ The game works without a database: the leaderboard screen just says it is offlin
    ```
 
 3. Copy `db.conf.example` to `db.conf` and put the same password in it (or set `ESCAPE_DB_HOST`, `ESCAPE_DB_PORT`, `ESCAPE_DB_USER`, `ESCAPE_DB_PASSWORD`, `ESCAPE_DB_NAME`).
-4. `make test-db` checks the database layer (it only touches `escape_professor_test`). Then play: after a win you enter a name, your rank is shown, and LEADERBOARD in the menu shows the Top 10 per difficulty.
+4. `make test-db` checks the database layer (it only touches `escape_professor_test`). Then play: after a win you enter a name, your rank is shown, and LEADERBOARD in the menu shows the Top 10 per difficulty. The PLAYER button on the main menu changes your name at any time.
 
 The build uses the MySQL client in `/usr/local/mysql`. For another install: `make MYSQL_CONFIG=/path/to/mysql_config`.
 

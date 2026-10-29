@@ -27,6 +27,7 @@ std::unique_ptr<Leaderboard> board;
 std::string player_file;       // remembered player name
 std::string player_name;       // "" until the player has entered one
 std::string name_input;        // what is being typed on the name screen
+State name_return = State::Win;  // Win after a first win, Menu when changing the name
 std::string submit_status;     // shown on the win screen: Submitting / Rank / offline
 Difficulty board_tab = DEFAULT_DIFFICULTY;
 std::vector<LeaderboardRow> board_rows;
@@ -78,6 +79,7 @@ void submit_run(const Game& game) {
 void on_win(const Game& game) {
     if (player_name.empty()) {
         name_input.clear();
+        name_return = State::Win;
         change_state(State::NameEntry);
     } else {
         submit_run(game);
@@ -134,11 +136,11 @@ constexpr int BUTTON_HEIGHT = 48;
 constexpr int BUTTON_GAP = 16;
 
 // Stacked vertically and centered
-std::vector<Button> make_buttons(const std::vector<std::string>& labels, int top) {
+std::vector<Button> make_buttons(const std::vector<std::string>& labels, int top, int gap = BUTTON_GAP) {
     std::vector<Button> buttons;
     for (std::size_t i = 0; i < labels.size(); i++) {
         SDL_Rect r{(SCREEN_WIDTH - BUTTON_WIDTH) / 2,
-                   top + static_cast<int>(i) * (BUTTON_HEIGHT + BUTTON_GAP), BUTTON_WIDTH, BUTTON_HEIGHT};
+                   top + static_cast<int>(i) * (BUTTON_HEIGHT + gap), BUTTON_WIDTH, BUTTON_HEIGHT};
         buttons.push_back({labels[i], r});
     }
     return buttons;
@@ -148,8 +150,9 @@ std::vector<Button> get_buttons(const Game& game) {
     switch (state) {
         case State::Menu:
             return make_buttons({"START GAME", std::string("DIFFICULTY: ") + name_of(game.difficulty),
+                                 "PLAYER: " + (player_name.empty() ? std::string("NOT SET") : player_name),
                                  "INSTRUCTIONS", "LEADERBOARD", "QUIT"},
-                                265);
+                                250, 12);
         case State::Instructions: return make_buttons({"BACK"}, SCREEN_HEIGHT - 80);
         case State::Paused: return make_buttons({"RESUME", "RESTART", "MAIN MENU"}, 265);
         case State::GameOver: return make_buttons({"RESTART", "LEADERBOARD", "MAIN MENU", "QUIT"}, 265);
@@ -173,6 +176,10 @@ void press_button(Game& game, const std::string& label) {
         change_state(State::Playing);
     } else if (label.rfind("DIFFICULTY", 0) == 0) {
         game.difficulty = static_cast<Difficulty>((static_cast<int>(game.difficulty) + 1) % DIFFICULTY_COUNT);
+    } else if (label.rfind("PLAYER", 0) == 0) {
+        name_input = player_name;  // start from the current name so it can be edited
+        name_return = State::Menu;
+        change_state(State::NameEntry);
     } else if (label == "INSTRUCTIONS") {
         change_state(State::Instructions);
     } else if (label == "LEADERBOARD") {
@@ -221,12 +228,12 @@ void handle_name_key(Game& game, SDL_Keycode key) {
         if (!name.empty()) {
             player_name = name;
             save_player_name();
-            submit_run(game);
-            change_state(State::Win);
+            if (name_return == State::Win) submit_run(game);  // changing the name from the menu submits nothing
+            change_state(name_return);
         }
     } else if (key == SDLK_ESCAPE) {
-        submit_status = "Score not submitted";
-        change_state(State::Win);
+        if (name_return == State::Win) submit_status = "Score not submitted";
+        change_state(name_return);
     }
 }
 
@@ -367,14 +374,16 @@ int main(int argc, char** argv) {
         else if (name == "win") {
             state = State::Win;
             submit_status = "Rank #4 of 37 on MEDIUM";
-        } else if (name == "nameentry") {
+        } else if (name == "nameentry" || name == "nameentry-menu") {
             state = State::NameEntry;
             name_input = "Krushn";
+            name_return = name == "nameentry" ? State::Win : State::Menu;
         } else if (name == "leaderboard" || name == "leaderboard-offline") {
             state = State::Leaderboard;
             if (name == "leaderboard") fill_demo_leaderboard();
             else board_status = "Leaderboard offline: Can't connect to MySQL server on '127.0.0.1:3306'";
         }
+        player_name = "Krushn";  // the real name from player.txt must not appear in screenshots
         game.elapsed_ms = 23400;
         game.steps = 41;
         game.final_score = 2150;
@@ -411,7 +420,7 @@ int main(int argc, char** argv) {
             case State::Win:
                 draw::overlay(game, state, "YOU ESCAPED!", EXIT_COLOR, buttons, mouse, submit_status);
                 break;
-            case State::NameEntry: draw::name_entry(game, name_input, (SDL_GetTicks() / 500) % 2 == 0); break;
+            case State::NameEntry: draw::name_entry(game, name_input, (SDL_GetTicks() / 500) % 2 == 0, name_return == State::Win); break;
             case State::Leaderboard:
                 draw::leaderboard(buttons, mouse, board_tab, board_rows, board_status, highlight);
                 break;

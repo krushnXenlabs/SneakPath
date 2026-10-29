@@ -571,18 +571,30 @@ void overlay(const Game& game, State state, const char* title, Color title_color
     buttons_row(buttons, mouse);
 }
 
-void name_entry(const Game& game, const std::string& input, bool caret_on) {
-    game_scene(game, State::Win);
-    rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Color{0, 0, 0, 150});
+void name_entry(const Game& game, const std::string& input, bool caret_on, bool for_win) {
+    if (for_win) {
+        game_scene(game, State::Win);
+        rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, Color{0, 0, 0, 150});
+    } else {
+        set_color(BACKGROUND);
+        SDL_RenderClear(renderer);
+        text(TITLE, "SNEAKPATH", TEXT_COLOR, SCREEN_WIDTH / 2, 130, CENTER);
+    }
 
     SDL_Rect panel{SCREEN_WIDTH / 2 - 280, SCREEN_HEIGHT / 2 - 130, 560, 260};
     rounded_rect(panel, 12, 2, BAR_BORDER, BAR_BG);
 
     int middle = SCREEN_WIDTH / 2;
-    text(HEADING, "YOU ESCAPED!", EXIT_COLOR, middle, panel.y + 40, CENTER);
-    text(TEXT, "Score " + std::to_string(game.final_score) + " on " + name_of(game.difficulty), PATH_COLOR, middle,
-         panel.y + 80, CENTER);
-    text(SMALL, "Enter your name for the leaderboard", TEXT_DIM, middle, panel.y + 115, CENTER);
+    if (for_win) {
+        text(HEADING, "YOU ESCAPED!", EXIT_COLOR, middle, panel.y + 40, CENTER);
+        text(TEXT, "Score " + std::to_string(game.final_score) + " on " + name_of(game.difficulty), PATH_COLOR, middle,
+             panel.y + 80, CENTER);
+        text(SMALL, "Enter your name for the leaderboard", TEXT_DIM, middle, panel.y + 115, CENTER);
+    } else {
+        text(HEADING, "CHANGE PLAYER NAME", PATH_COLOR, middle, panel.y + 40, CENTER);
+        text(TEXT, "Your scores are saved under this name", TEXT_COLOR, middle, panel.y + 80, CENTER);
+        text(SMALL, "Up to 12 letters, numbers, spaces, _ or -", TEXT_DIM, middle, panel.y + 115, CENTER);
+    }
 
     SDL_Rect box{middle - 180, panel.y + 135, 360, 48};
     rounded_rect(box, 8, 2, BUTTON_BORDER, Color{14, 14, 20});
@@ -594,7 +606,8 @@ void name_entry(const Game& game, const std::string& input, bool caret_on) {
         rect(box.x + 14 + std::floor(w / scale) + 2, static_cast<float>(box.y + 10), 2, 28, TEXT_COLOR);
     }
 
-    text(SMALL, "ENTER = submit     ESC = skip", TEXT_DIM, middle, panel.y + 220, CENTER);
+    text(SMALL, for_win ? "ENTER = submit     ESC = skip" : "ENTER = save     ESC = cancel", TEXT_DIM, middle,
+         panel.y + 220, CENTER);
 }
 
 void leaderboard(const std::vector<Button>& buttons, SDL_Point mouse, Difficulty tab,

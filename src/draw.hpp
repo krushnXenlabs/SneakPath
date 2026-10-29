@@ -32,7 +32,8 @@ void game_scene(const Game& game, State state);
 // Paused / game over / win: the frozen game behind a dark layer and a panel
 void overlay(const Game& game, State state, const char* title, Color title_color,
              const std::vector<Button>& buttons, SDL_Point mouse, const std::string& submit_status);
-void name_entry(const Game& game, const std::string& input, bool caret_on);
+// for_win: shown after a win (submits the score); otherwise opened from the menu to change the name
+void name_entry(const Game& game, const std::string& input, bool caret_on, bool for_win);
 void leaderboard(const std::vector<Button>& buttons, SDL_Point mouse, Difficulty tab,
                  const std::vector<LeaderboardRow>& rows, const std::string& status, const Highlight& highlight);
 // Writes the current frame (call before presenting) to a BMP file
